@@ -77,8 +77,8 @@ type freezer struct {
 	// WARNING: The `frozen` field is accessed atomically. On 32 bit platforms, only
 	// 64-bit aligned fields can be atomic. The struct is guaranteed to be so aligned,
 	// so take advantage of that (https://golang.org/pkg/sync/atomic/#pkg-note-BUG).
-	frozen    uint64 // Number of blocks already frozen
-	tail      uint64 // Number of the first stored item in the freezer
+	frozen    uint64 // Number of items stored in the freezer
+	tail      uint64 // Index of tail item stored in the freezer
 	threshold uint64 // Number of recent blocks not to freeze (params.FullImmutabilityThreshold apart from tests)
 
 	// This lock synchronizes writers and the truncate operation, as well as
@@ -227,7 +227,7 @@ func (f *freezer) Ancients() (uint64, error) {
 	return atomic.LoadUint64(&f.frozen), nil
 }
 
-// Tail returns the number of first stored item in the freezer.
+// Tail returns the index of the tail item in the freezer.
 func (f *freezer) Tail() (uint64, error) {
 	return atomic.LoadUint64(&f.tail), nil
 }

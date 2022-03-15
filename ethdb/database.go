@@ -84,7 +84,7 @@ type AncientReader interface {
 	//   return as many items as fit into maxBytes.
 	AncientRange(kind string, start, count, maxBytes uint64) ([][]byte, error)
 
-	// Ancients returns the ancient item numbers in the ancient store.
+	// Ancients returns the number of ancient items in the ancient store.
 	Ancients() (uint64, error)
 
 	// Tail returns the number of first stored item in the freezer.

@@ -237,9 +237,6 @@ func (t *freezerTable) repair() error {
 	firstIndex.unmarshalBinary(buffer)
 
 	// Assign the tail fields with the first stored index.
-	// The total removed items is represented with an uint32,
-	// which is not enough in theory but enough in practice.
-	// TODO: use uint64 to represent total removed items.
 	t.tailId = firstIndex.filenum
 	t.itemOffset = uint64(firstIndex.offset)
 
@@ -477,7 +474,7 @@ func (t *freezerTable) truncateTail(items uint64) error {
 	if err := writeMetadata(t.meta, newMetadata(items)); err != nil {
 		return err
 	}
-	// Hidden items still fall in the current tail file, no data file
+	// All hidden items fall in the current tail file, no data file
 	// can be dropped.
 	if t.tailId == newTailId {
 		return nil
