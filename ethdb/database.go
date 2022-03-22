@@ -87,7 +87,10 @@ type AncientReader interface {
 	// Ancients returns the number of ancient items in the ancient store.
 	Ancients() (uint64, error)
 
-	// Tail returns the number of first stored item in the freezer.
+	// Head returns the index of the head item in the freezer. When items start at 0, it is equal to Ancients()-1.
+	Head() (uint64, error)
+
+	// Tail returns the index of the tail item in the freezer.
 	// This number can also be interpreted as the total deleted item numbers.
 	Tail() (uint64, error)
 

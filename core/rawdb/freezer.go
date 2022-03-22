@@ -227,6 +227,11 @@ func (f *freezer) Ancients() (uint64, error) {
 	return atomic.LoadUint64(&f.frozen), nil
 }
 
+// Head returns the index of the head item in the freezer.
+func (f *freezer) Head() (uint64, error) {
+	return atomic.LoadUint64(&f.frozen) - 1, nil
+}
+
 // Tail returns the index of the tail item in the freezer.
 func (f *freezer) Tail() (uint64, error) {
 	return atomic.LoadUint64(&f.tail), nil

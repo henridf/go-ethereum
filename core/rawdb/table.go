@@ -74,6 +74,10 @@ func (t *table) Ancients() (uint64, error) {
 	return t.db.Ancients()
 }
 
+func (t *table) Head() (uint64, error) {
+	return t.db.Head()
+}
+
 // Tail is a noop passthrough that just forwards the request to the underlying
 // database.
 func (t *table) Tail() (uint64, error) {

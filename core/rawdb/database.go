@@ -104,6 +104,11 @@ func (db *nofreezedb) Tail() (uint64, error) {
 	return 0, errNotSupported
 }
 
+// Head returns an error as we don't have a backing chain freezer.
+func (db *nofreezedb) Head() (uint64, error) {
+	return 0, errNotSupported
+}
+
 // AncientSize returns an error as we don't have a backing chain freezer.
 func (db *nofreezedb) AncientSize(kind string) (uint64, error) {
 	return 0, errNotSupported
