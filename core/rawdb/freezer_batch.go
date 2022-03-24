@@ -107,7 +107,7 @@ func (t *freezerTable) newBatch() *freezerTableBatch {
 func (batch *freezerTableBatch) reset() {
 	batch.dataBuffer = batch.dataBuffer[:0]
 	batch.indexBuffer = batch.indexBuffer[:0]
-	batch.curItem = atomic.LoadUint64(&batch.t.items)
+	batch.curItem = atomic.LoadUint64(&batch.t.items) + atomic.LoadUint64(&batch.t.itemOffset)
 	batch.totalBytes = 0
 }
 
@@ -201,7 +201,8 @@ func (batch *freezerTableBatch) commit() error {
 
 	// Update headBytes of table.
 	batch.t.headBytes += dataSize
-	atomic.StoreUint64(&batch.t.items, batch.curItem)
+	itemOffset := atomic.LoadUint64(&batch.t.itemOffset)
+	atomic.StoreUint64(&batch.t.items, batch.curItem-itemOffset)
 
 	// Update metrics.
 	batch.t.sizeGauge.Inc(dataSize + indexSize)

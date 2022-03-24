@@ -189,29 +189,36 @@ func NewDatabaseWithFreezer(db ethdb.KeyValueStore, freezer string, namespace st
 	// it to the freezer content.
 	if kvgenesis, _ := db.Get(headerHashKey(0)); len(kvgenesis) > 0 {
 		if frozen, _ := frdb.Ancients(); frozen > 0 {
-			// If the freezer already contains something, ensure that the genesis blocks
-			// match, otherwise we might mix up freezers across chains and destroy both
-			// the freezer and the key-value store.
-			frgenesis, err := frdb.Ancient(freezerHashTable, 0)
-			if err != nil {
-				return nil, fmt.Errorf("failed to retrieve genesis from ancient %v", err)
-			} else if !bytes.Equal(kvgenesis, frgenesis) {
-				return nil, fmt.Errorf("genesis mismatch: %#x (leveldb) != %#x (ancients)", kvgenesis, frgenesis)
-			}
-			// Key-value store and freezer belong to the same network. Ensure that they
-			// are contiguous, otherwise we might end up with a non-functional freezer.
-			if kvhash, _ := db.Get(headerHashKey(frozen)); len(kvhash) == 0 {
-				// Subsequent header after the freezer limit is missing from the database.
-				// Reject startup is the database has a more recent head.
-				if *ReadHeaderNumber(db, ReadHeadHeaderHash(db)) > frozen-1 {
-					return nil, fmt.Errorf("gap (#%d) in the chain between ancients and leveldb", frozen)
-				}
-				// Database contains only older data than the freezer, this happens if the
-				// state was wiped and reinited from an existing freezer.
-			}
-			// Otherwise, key-value store continues where the freezer left off, all is fine.
-			// We might have duplicate blocks (crash after freezer write but before key-value
-			// store deletion, but that's fine).
+
+			// this fails due to bounds-checking. is it
+			// worth adding the complexity to the freezer
+			// to store the genesis, then a gap, then
+			// whatever comes after? seems not for this prototype.
+
+			// 	// If the freezer already contains something, ensure that the genesis blocks
+			// 	// match, otherwise we might mix up freezers across chains and destroy both
+			// 	// the freezer and the key-value store.
+			// 	frgenesis, err := frdb.Ancient(freezerHashTable, 0)
+			// 	if err != nil {
+			// 		return nil, fmt.Errorf("failed to retrieve genesis from ancient %v", err)
+			// 	} else if !bytes.Equal(kvgenesis, frgenesis) {
+			// 		return nil, fmt.Errorf("genesis mismatch: %#x (leveldb) != %#x (ancients)", kvgenesis, frgenesis)
+			// 	}
+			// 	// Key-value store and freezer belong to the same network. Ensure that they
+			// 	// are contiguous, otherwise we might end up with a non-functional freezer.
+			// 	if kvhash, _ := db.Get(headerHashKey(frozen)); len(kvhash) == 0 {
+			// 		// Subsequent header after the freezer limit is missing from the database.
+			// 		// Reject startup is the database has a more recent head.
+			// 		if *ReadHeaderNumber(db, ReadHeadHeaderHash(db)) > frozen-1 {
+			// 			return nil, fmt.Errorf("gap (#%d) in the chain between ancients and leveldb", frozen)
+			// 		}
+			// 		// Database contains only older data than the freezer, this happens if the
+			// 		// state was wiped and reinited from an existing freezer.
+			// 	}
+			// 	// Otherwise, key-value store continues where the freezer left off, all is fine.
+			// 	// We might have duplicate blocks (crash after freezer write but before key-value
+			// 	// store deletion, but that's fine).
+			// }
 		} else {
 			// If the freezer is empty, ensure nothing was moved yet from the key-value
 			// store, otherwise we'll end up missing data. We check block #1 to decide

@@ -134,7 +134,7 @@ func newFreezer(datadir string, namespace string, readonly bool, maxTableSize ui
 
 	// Create the tables.
 	for name, disableSnappy := range tables {
-		table, err := newTable(datadir, name, readMeter, writeMeter, sizeGauge, maxTableSize, disableSnappy, readonly)
+		table, err := newTable(datadir, name, readMeter, writeMeter, sizeGauge, 0, maxTableSize, disableSnappy, readonly)
 		if err != nil {
 			for _, table := range freezer.tables {
 				table.Close()
@@ -229,7 +229,7 @@ func (f *freezer) Ancients() (uint64, error) {
 
 // Head returns the index of the head item in the freezer.
 func (f *freezer) Head() (uint64, error) {
-	return atomic.LoadUint64(&f.frozen) - 1, nil
+	return atomic.LoadUint64(&f.frozen) + atomic.LoadUint64(&f.tail), nil
 }
 
 // Tail returns the index of the tail item in the freezer.
@@ -376,13 +376,13 @@ func (f *freezer) validate() error {
 // repair truncates all data tables to the same length.
 func (f *freezer) repair() error {
 	var (
-		head = uint64(math.MaxUint64)
-		tail = uint64(0)
+		frozen = uint64(math.MaxUint64)
+		tail   = uint64(0)
 	)
 	for _, table := range f.tables {
 		items := atomic.LoadUint64(&table.items)
-		if head > items {
-			head = items
+		if frozen > items {
+			frozen = items
 		}
 		hidden := atomic.LoadUint64(&table.itemHidden)
 		if hidden > tail {
@@ -390,14 +390,14 @@ func (f *freezer) repair() error {
 		}
 	}
 	for _, table := range f.tables {
-		if err := table.truncateHead(head); err != nil {
+		if err := table.truncateHead(frozen + tail); err != nil {
 			return err
 		}
 		if err := table.truncateTail(tail); err != nil {
 			return err
 		}
 	}
-	atomic.StoreUint64(&f.frozen, head)
+	atomic.StoreUint64(&f.frozen, frozen)
 	atomic.StoreUint64(&f.tail, tail)
 	return nil
 }
@@ -457,7 +457,7 @@ func (f *freezer) freeze(db ethdb.KeyValueStore) {
 			backoff = true
 			continue
 
-		case *number-threshold <= f.frozen:
+		case *number-threshold <= f.frozen+f.tail:
 			log.Debug("Ancient blocks frozen already", "number", *number, "hash", hash, "frozen", f.frozen)
 			backoff = true
 			continue

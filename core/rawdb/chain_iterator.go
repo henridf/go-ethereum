@@ -34,21 +34,28 @@ import (
 // injects into the database the block hash->number mappings.
 func InitDatabaseFromFreezer(db ethdb.Database) {
 	// If we can't access the freezer or it's empty, abort
-	frozen, err := db.Ancients()
-	if err != nil || frozen == 0 {
+	ancients, err := db.Ancients()
+	if err != nil || ancients == 0 {
 		return
 	}
+
+	tail, err := db.Tail()
+	if err != nil {
+		return
+	}
+	head := tail + ancients
+	log.Info("info", "head", head, "tail", tail, "ancients", ancients)
 	var (
 		batch  = db.NewBatch()
 		start  = time.Now()
 		logged = start.Add(-7 * time.Second) // Unindex during import is fast, don't double log
 		hash   common.Hash
 	)
-	for i := uint64(0); i < frozen; {
+	for i := tail; i < head; {
 		// We read 100K hashes at a time, for a total of 3.2M
 		count := uint64(100_000)
-		if i+count > frozen {
-			count = frozen - i
+		if i+count > head {
+			count = head - i
 		}
 		data, err := db.AncientRange(freezerHashTable, i, count, 32*count)
 		if err != nil {
@@ -69,7 +76,7 @@ func InitDatabaseFromFreezer(db ethdb.Database) {
 		i += uint64(len(data))
 		// If we've spent too much time already, notify the user of what we're doing
 		if time.Since(logged) > 8*time.Second {
-			log.Info("Initializing database from freezer", "total", frozen, "number", i, "hash", hash, "elapsed", common.PrettyDuration(time.Since(start)))
+			log.Info("Initializing database from freezer", "total", tail-head, "number", i, "hash", hash, "elapsed", common.PrettyDuration(time.Since(start)))
 			logged = time.Now()
 		}
 	}
@@ -80,7 +87,7 @@ func InitDatabaseFromFreezer(db ethdb.Database) {
 
 	WriteHeadHeaderHash(db, hash)
 	WriteHeadFastBlockHash(db, hash)
-	log.Info("Initialized database from freezer", "blocks", frozen, "elapsed", common.PrettyDuration(time.Since(start)))
+	log.Info("Initialized database from freezer", "blocks", tail-head, "elapsed", common.PrettyDuration(time.Since(start)))
 }
 
 type blockTxHashes struct {
