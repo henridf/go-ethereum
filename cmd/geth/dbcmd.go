@@ -712,6 +712,10 @@ func showMetaData(ctx *cli.Context) error {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error accessing ancients: %v", err)
 	}
+	ancientTail, err := db.Tail()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error accessing ancients tail: %v", err)
+	}
 	pp := func(val *uint64) string {
 		if val == nil {
 			return "<nil>"
@@ -733,7 +737,9 @@ func showMetaData(ctx *cli.Context) error {
 		data = append(data, []string{"headHeader.Root", fmt.Sprintf("%v", h.Root)})
 		data = append(data, []string{"headHeader.Number", fmt.Sprintf("%d (0x%x)", h.Number, h.Number)})
 	}
-	data = append(data, [][]string{{"frozen", fmt.Sprintf("%d items", ancients)},
+	data = append(data, [][]string{
+		{"frozen", fmt.Sprintf("%d items", ancients)},
+		{"frozen tail", fmt.Sprintf("%d (index)", ancientTail)},
 		{"lastPivotNumber", pp(rawdb.ReadLastPivotNumber(db))},
 		{"len(snapshotSyncStatus)", fmt.Sprintf("%d bytes", len(rawdb.ReadSnapshotSyncStatus(db)))},
 		{"snapshotGenerator", snapshot.ParseGeneratorStatus(rawdb.ReadSnapshotGenerator(db))},
