@@ -548,10 +548,11 @@ func (d *Downloader) syncWithPeer(p *peerConnection, hash common.Hash, td, ttd *
 			d.ancientLimit = 0
 		}
 		frozen, _ := d.stateDB.Ancients() // Ignore the error here since light client can also hit here.
+		frozenTail, _ := d.stateDB.Tail()
 
 		// If a part of blockchain data has already been written into active store,
 		// disable the ancient style insertion explicitly.
-		if origin >= frozen && frozen != 0 {
+		if origin >= frozen+frozenTail && frozen != 0 {
 			d.ancientLimit = 0
 			log.Info("Disabling direct-ancient mode", "origin", origin, "ancient", frozen-1)
 		} else if d.ancientLimit > 0 {
@@ -793,6 +794,11 @@ func (d *Downloader) findAncestor(p *peerConnection, remoteHeader *types.Header)
 		// We're above the max reorg threshold, find the earliest fork point
 		floor = int64(localHeight - maxForkAncestry)
 	}
+	tail, _ := d.stateDB.Tail()
+	ancients, _ := d.stateDB.Ancients()
+	if ancients > 0 && floor < int64(tail) {
+		floor = int64(tail)
+	}
 	// If we're doing a light sync, ensure the floor doesn't go below the CHT, as
 	// all headers before that point will be missing.
 	if mode == LightSync {
@@ -933,6 +939,10 @@ func (d *Downloader) findAncestorBinarySearch(p *peerConnection, mode SyncMode, 
 			continue
 		}
 		header := d.lightchain.GetHeaderByHash(h) // Independent of sync mode, header surely exists
+		if header == nil {
+			end = check
+			continue
+		}
 		if header.Number.Uint64() != check {
 			p.log.Warn("Received non requested header", "number", header.Number, "hash", header.Hash(), "request", check)
 			return 0, fmt.Errorf("%w: non-requested header (%d)", errBadPeer, header.Number)
