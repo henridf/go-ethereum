@@ -38,6 +38,7 @@ import (
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/metrics"
 	"github.com/ethereum/go-ethereum/node"
+	"github.com/ethereum/go-ethereum/params"
 	"gopkg.in/urfave/cli.v1"
 )
 
@@ -110,6 +111,40 @@ with several RLP-encoded blocks, or several files can be used.
 
 If only one file is used, import error will result in failure. If several files are used,
 processing will proceed even if an individual RLP-file import failure occurs.`,
+	}
+	gapfillCommand = cli.Command{
+		Action:    utils.MigrateFlags(gapfillChain),
+		Name:      "gapfill",
+		Usage:     "Gapfill blockchain file(s)",
+		ArgsUsage: "<filename> (<filename 2> ... <filename N>) ",
+		Flags: []cli.Flag{
+			utils.DataDirFlag,
+			utils.CacheFlag,
+			utils.SyncModeFlag,
+			utils.GCModeFlag,
+			utils.SnapshotFlag,
+			utils.CacheDatabaseFlag,
+			utils.CacheGCFlag,
+			utils.MetricsEnabledFlag,
+			utils.MetricsEnabledExpensiveFlag,
+			utils.MetricsHTTPFlag,
+			utils.MetricsPortFlag,
+			utils.MetricsEnableInfluxDBFlag,
+			utils.MetricsEnableInfluxDBV2Flag,
+			utils.MetricsInfluxDBEndpointFlag,
+			utils.MetricsInfluxDBDatabaseFlag,
+			utils.MetricsInfluxDBUsernameFlag,
+			utils.MetricsInfluxDBPasswordFlag,
+			utils.MetricsInfluxDBTagsFlag,
+			utils.MetricsInfluxDBTokenFlag,
+			utils.MetricsInfluxDBBucketFlag,
+			utils.MetricsInfluxDBOrganizationFlag,
+			utils.TxLookupLimitFlag,
+		},
+		Category: "BLOCKCHAIN COMMANDS",
+		Description: `
+xxx
+.`,
 	}
 	exportCommand = cli.Command{
 		Action:    utils.MigrateFlags(exportChain),
@@ -232,7 +267,14 @@ func dumpGenesis(ctx *cli.Context) error {
 	return nil
 }
 
+func gapfillChain(ctx *cli.Context) error {
+	return fillChain(ctx, true)
+}
 func importChain(ctx *cli.Context) error {
+	return fillChain(ctx, false)
+}
+
+func fillChain(ctx *cli.Context, gap bool) error {
 	if len(ctx.Args()) < 1 {
 		utils.Fatalf("This command requires an argument.")
 	}
@@ -267,19 +309,44 @@ func importChain(ctx *cli.Context) error {
 
 	var importErr error
 
-	if len(ctx.Args()) == 1 {
-		if err := utils.ImportChain(chain, ctx.Args().First()); err != nil {
-			importErr = err
-			log.Error("Import error", "err", err)
+	var tmpChain *core.BlockChain
+	var tmpDb ethdb.Database
+	if gap {
+		tmpDataDir, err := os.MkdirTemp("", "")
+		if err != nil {
+			return fmt.Errorf("Creating temp dir for gapfill: %s", err)
 		}
-	} else {
-		for _, arg := range ctx.Args() {
+		//		defer os.RemoveAll(tmpDataDir)
+
+		ctxDataDir := ctx.GlobalString(utils.DataDirFlag.Name)
+		ctx.GlobalSet(utils.DataDirFlag.Name, tmpDataDir)
+
+		tmpStack, _ := makeConfigNode(ctx)
+		log.Info("tmp dir", "path", tmpStack.Config().DataDir)
+
+		defer tmpStack.Close()
+
+		tmpChain, tmpDb = utils.MakeChain(ctx, tmpStack)
+		defer tmpDb.Close()
+		ctx.GlobalSet(utils.DataDirFlag.Name, ctxDataDir)
+	}
+	for _, arg := range ctx.Args() {
+		if gap {
+			if err := utils.GapfillChain(tmpChain, params.MainnetTrustedCheckpoint, arg); err != nil {
+				importErr = err
+				log.Error("Import error", "file", arg, "err", err)
+			}
+		} else {
 			if err := utils.ImportChain(chain, arg); err != nil {
 				importErr = err
 				log.Error("Import error", "file", arg, "err", err)
 			}
 		}
 	}
+	if gap {
+		// here we do the merging of the two freezers
+	}
+
 	chain.Stop()
 	fmt.Printf("Import done in %v.\n\n", time.Since(start))
 

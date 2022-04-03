@@ -216,6 +216,7 @@ func init() {
 	app.Commands = []cli.Command{
 		// See chaincmd.go:
 		initCommand,
+		gapfillCommand,
 		importCommand,
 		exportCommand,
 		importPreimagesCommand,

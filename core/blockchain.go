@@ -42,6 +42,7 @@ import (
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/metrics"
 	"github.com/ethereum/go-ethereum/params"
+	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/trie"
 	lru "github.com/hashicorp/golang-lru"
 )
@@ -713,12 +714,26 @@ func (bc *BlockChain) ExportN(w io.Writer, first uint64, last uint64) error {
 	log.Info("Exporting batch of blocks", "count", last-first+1)
 
 	start, reported := time.Now(), time.Now()
+	var stReceipts []*types.ReceiptForStorage
+
 	for nr := first; nr <= last; nr++ {
 		block := bc.GetBlockByNumber(nr)
 		if block == nil {
 			return fmt.Errorf("export failed on #%d: not found", nr)
 		}
+		receipts := bc.GetReceiptsByHash(block.Hash())
+		if receipts == nil {
+			return fmt.Errorf("nil receipts for block %d %s\n", nr, block.Hash())
+		}
+		stReceipts = stReceipts[:0]
+		for _, receipt := range receipts {
+			stReceipts = append(stReceipts, (*types.ReceiptForStorage)(receipt))
+		}
+
 		if err := block.EncodeRLP(w); err != nil {
+			return err
+		}
+		if err := rlp.Encode(w, stReceipts); err != nil {
 			return err
 		}
 		if time.Since(reported) >= statsReportLimit {

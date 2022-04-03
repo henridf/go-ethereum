@@ -40,6 +40,7 @@ import (
 	"github.com/ethereum/go-ethereum/internal/debug"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/node"
+	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rlp"
 	"gopkg.in/urfave/cli.v1"
 )
@@ -135,6 +136,108 @@ func monitorFreeDiskSpace(sigc chan os.Signal, path string, freeDiskSpaceCritica
 	}
 }
 
+func GapfillChain(chain *core.BlockChain, tc *params.TrustedCheckpoint, fn string) error {
+	// Watch for Ctrl-C while the import is running.
+	// If a signal is received, the import will stop at the next batch.
+	interrupt := make(chan os.Signal, 1)
+	stop := make(chan struct{})
+	signal.Notify(interrupt, syscall.SIGINT, syscall.SIGTERM)
+	ancientLimit := (tc.SectionIndex+1)*params.CHTFrequency - 1
+	defer signal.Stop(interrupt)
+	defer close(interrupt)
+	go func() {
+		if _, ok := <-interrupt; ok {
+			log.Info("Interrupted during import, stopping at next batch")
+		}
+		close(stop)
+	}()
+	checkInterrupt := func() bool {
+		select {
+		case <-stop:
+			return true
+		default:
+			return false
+		}
+	}
+
+	log.Info("Importing blockchain", "file", fn)
+
+	// Open the file handle and potentially unwrap the gzip stream
+	fh, err := os.Open(fn)
+	if err != nil {
+		return err
+	}
+	defer fh.Close()
+
+	var reader io.Reader = fh
+	if strings.HasSuffix(fn, ".gz") {
+		if reader, err = gzip.NewReader(reader); err != nil {
+			return err
+		}
+	}
+	stream := rlp.NewStream(reader, 0)
+
+	// Run actual the import.
+	blocks := make(types.Blocks, importBatchSize)
+	n := 0
+	receipts := make([]types.Receipts, importBatchSize)
+	var stReceipts []*types.ReceiptForStorage
+	for batch := 0; ; batch++ {
+		// Load a batch of RLP blocks.
+		if checkInterrupt() {
+			return fmt.Errorf("interrupted")
+		}
+		i := 0
+		for ; i < importBatchSize; i++ {
+			var b types.Block
+			if err := stream.Decode(&b); err == io.EOF {
+				break
+			} else if err != nil {
+				return fmt.Errorf("at block %d: %v", n, err)
+			}
+			if err := stream.Decode(&stReceipts); err == io.EOF {
+				break
+			} else if err != nil {
+				return fmt.Errorf("at receipts %d: %v", n, err)
+			}
+			rrs := make(types.Receipts, len(stReceipts))
+			for i, stReceipt := range stReceipts {
+				rrs[i] = (*types.Receipt)(stReceipt)
+			}
+
+			// don't import first block
+			if b.NumberU64() == 0 {
+				i--
+				continue
+			}
+			blocks[i] = &b
+			receipts[i] = rrs
+			n++
+		}
+		if i == 0 {
+			break
+		}
+		// Import the batch.
+		if checkInterrupt() {
+			return fmt.Errorf("interrupted")
+		}
+		missingBlocks := missingBlocks(chain, blocks[:i])
+		if len(missingBlocks) == 0 {
+			log.Info("Skipping batch as all blocks present", "batch", batch, "first", blocks[0].Hash(), "last", blocks[i-1].Hash())
+			continue
+		}
+		missingReceipts := missingReceipts(chain, blocks[:i], receipts[:i])
+		headers := headers(missingBlocks)
+		if _, err := chain.InsertHeaderChain(headers, 100); err != nil {
+			fmt.Errorf("error inserting headers %d: %v", n, err)
+		}
+		if _, err := chain.InsertReceiptChain(missingBlocks, missingReceipts, ancientLimit); err != nil {
+			return fmt.Errorf("invalid block %d: %v", n, err)
+		}
+	}
+	return nil
+}
+
 func ImportChain(chain *core.BlockChain, fn string) error {
 	// Watch for Ctrl-C while the import is running.
 	// If a signal is received, the import will stop at the next batch.
@@ -218,6 +321,14 @@ func ImportChain(chain *core.BlockChain, fn string) error {
 	return nil
 }
 
+func headers(blocks []*types.Block) []*types.Header {
+	var hhs []*types.Header
+	for _, block := range blocks {
+		hhs = append(hhs, block.Header())
+	}
+	return hhs
+}
+
 func missingBlocks(chain *core.BlockChain, blocks []*types.Block) []*types.Block {
 	head := chain.CurrentBlock()
 	for i, block := range blocks {
@@ -231,6 +342,23 @@ func missingBlocks(chain *core.BlockChain, blocks []*types.Block) []*types.Block
 		// If we're above the chain head, state availability is a must
 		if !chain.HasBlockAndState(block.Hash(), block.NumberU64()) {
 			return blocks[i:]
+		}
+	}
+	return nil
+}
+func missingReceipts(chain *core.BlockChain, blocks []*types.Block, receipts []types.Receipts) []types.Receipts {
+	head := chain.CurrentBlock()
+	for i, block := range blocks {
+		// If we're behind the chain head, only check block, state is available at head
+		if head.NumberU64() > block.NumberU64() {
+			if !chain.HasBlock(block.Hash(), block.NumberU64()) {
+				return receipts[i:]
+			}
+			continue
+		}
+		// If we're above the chain head, state availability is a must
+		if !chain.HasBlockAndState(block.Hash(), block.NumberU64()) {
+			return receipts[i:]
 		}
 	}
 	return nil
