@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path"
 	"runtime"
 	"strconv"
 	"sync/atomic"
@@ -283,11 +284,16 @@ func fillChain(ctx *cli.Context, gap bool) error {
 	// Start system runtime metrics collection
 	go metrics.CollectProcessMetrics(3 * time.Second)
 
-	stack, _ := makeConfigNode(ctx)
-	defer stack.Close()
+	var stack *node.Node
+	var chain *core.BlockChain
+	var db ethdb.Database
+	if !gap {
+		stack, _ = makeConfigNode(ctx)
+		defer stack.Close()
 
-	chain, db := utils.MakeChain(ctx, stack)
-	defer db.Close()
+		chain, db = utils.MakeChain(ctx, stack)
+		defer db.Close()
+	}
 
 	// Start periodically gathering memory profiles
 	var peakMemAlloc, peakMemSys uint64
@@ -311,8 +317,11 @@ func fillChain(ctx *cli.Context, gap bool) error {
 
 	var tmpChain *core.BlockChain
 	var tmpDb ethdb.Database
+	var tmpStack *node.Node
+	var tmpDataDir string
 	if gap {
-		tmpDataDir, err := os.MkdirTemp("", "")
+		var err error
+		tmpDataDir, err = os.MkdirTemp("", "")
 		if err != nil {
 			return fmt.Errorf("Creating temp dir for gapfill: %s", err)
 		}
@@ -321,15 +330,13 @@ func fillChain(ctx *cli.Context, gap bool) error {
 		ctxDataDir := ctx.GlobalString(utils.DataDirFlag.Name)
 		ctx.GlobalSet(utils.DataDirFlag.Name, tmpDataDir)
 
-		tmpStack, _ := makeConfigNode(ctx)
+		tmpStack, _ = makeConfigNode(ctx)
 		log.Info("tmp dir", "path", tmpStack.Config().DataDir)
 
-		defer tmpStack.Close()
-
 		tmpChain, tmpDb = utils.MakeChain(ctx, tmpStack)
-		defer tmpDb.Close()
 		ctx.GlobalSet(utils.DataDirFlag.Name, ctxDataDir)
 	}
+
 	for _, arg := range ctx.Args() {
 		if gap {
 			if err := utils.GapfillChain(tmpChain, params.MainnetTrustedCheckpoint, arg); err != nil {
@@ -343,8 +350,32 @@ func fillChain(ctx *cli.Context, gap bool) error {
 			}
 		}
 	}
+
 	if gap {
-		// here we do the merging of the two freezers
+		tmpChain.Stop()
+		tmpStack.Close()
+		tmpDb.Close()
+
+		p := path.Join(tmpDataDir, "geth", "chaindata", "ancient")
+		log.Info("toFreezer", "dir", p)
+		to, err := rawdb.NewFreezer(p, "", false, rawdb.FreezerTableSize, rawdb.FreezerNoSnappy)
+		if err != nil {
+			return fmt.Errorf("opening tmp freezer for concat: %s", err)
+		}
+
+		p = path.Join(ctx.GlobalString(utils.DataDirFlag.Name), "geth", "chaindata", "ancient")
+		log.Info("fromFreezer", "dir", p)
+		from, err := rawdb.NewFreezer(p, "", false, rawdb.FreezerTableSize, rawdb.FreezerNoSnappy)
+		if err != nil {
+			return fmt.Errorf("opening datadir freezer for concat: %s", err)
+		}
+		rawdb.Concat(to, from)
+
+		stack, _ = makeConfigNode(ctx)
+		defer stack.Close()
+
+		chain, db = utils.MakeChain(ctx, stack)
+		defer db.Close()
 	}
 
 	chain.Stop()

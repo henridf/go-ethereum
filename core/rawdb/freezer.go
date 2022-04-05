@@ -53,6 +53,9 @@ var (
 )
 
 const (
+	// FreezerTableSize defines the maximum size of freezer data files.
+	FreezerTableSize = 2 * 1000 * 1000 * 1000
+
 	// freezerRecheckInterval is the frequency to check the key-value database for
 	// chain progression that might permit new blocks to be frozen into immutable
 	// storage.
@@ -61,9 +64,6 @@ const (
 	// freezerBatchLimit is the maximum number of blocks to freeze in one batch
 	// before doing an fsync and deleting it from the key-value store.
 	freezerBatchLimit = 30000
-
-	// freezerTableSize defines the maximum size of freezer data files.
-	freezerTableSize = 2 * 1000 * 1000 * 1000
 )
 
 // freezer is a memory mapped append-only database to store immutable chain data
@@ -97,12 +97,12 @@ type freezer struct {
 	closeOnce sync.Once
 }
 
-// newFreezer creates a chain freezer that moves ancient chain data into
+// NewFreezer creates a chain freezer that moves ancient chain data into
 // append-only flat file containers.
 //
 // The 'tables' argument defines the data tables. If the value of a map
 // entry is true, snappy compression is disabled for the table.
-func newFreezer(datadir string, namespace string, readonly bool, maxTableSize uint32, tables map[string]bool) (*freezer, error) {
+func NewFreezer(datadir string, namespace string, readonly bool, maxTableSize uint32, tables map[string]bool) (*freezer, error) {
 	// Create the initial freezer object
 	var (
 		readMeter  = metrics.NewRegisteredMeter(namespace+"ancient/read", nil)
