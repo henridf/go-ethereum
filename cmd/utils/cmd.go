@@ -229,7 +229,7 @@ func GapfillChain(chain *core.BlockChain, tc *params.TrustedCheckpoint, fn strin
 		missingReceipts := missingReceipts(chain, blocks[:i], receipts[:i])
 		headers := headers(missingBlocks)
 		if _, err := chain.InsertHeaderChain(headers, 100); err != nil {
-			fmt.Errorf("error inserting headers %d: %v", n, err)
+			return fmt.Errorf("error inserting headers %d: %v", n, err)
 		}
 		if _, err := chain.InsertReceiptChain(missingBlocks, missingReceipts, ancientLimit); err != nil {
 			return fmt.Errorf("invalid block %d: %v", n, err)

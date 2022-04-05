@@ -17,10 +17,14 @@
 package rawdb
 
 import (
+	"bufio"
+	"fmt"
 	"io"
 	"io/ioutil"
 	"os"
 	"path/filepath"
+
+	"github.com/ethereum/go-ethereum/log"
 )
 
 // copyFrom copies data from 'srcPath' at offset 'offset' into 'destPath'.
@@ -114,6 +118,91 @@ func truncateFreezerFile(file *os.File, size int64) error {
 	}
 	// Seek to end for append
 	if _, err := file.Seek(0, io.SeekEnd); err != nil {
+		return err
+	}
+	return nil
+}
+
+func Concat(to, from *freezer) error {
+	for name, totab := range to.tables {
+		log.Debug("backfilling ancients", "table", name)
+		fromtab, ok := from.tables[name]
+		if !ok {
+			return fmt.Errorf("table %s not in source freezer", name)
+		}
+		err := concat(totab, fromtab)
+		if err != nil {
+			return fmt.Errorf("concatenating tables %s: %s", name, err)
+		}
+	}
+
+	toPath := to.tables["headers"].path
+	fromPath := from.tables["headers"].path
+
+	log.Debug("moving ancient dir", "from", fromPath, "to", fromPath+".old")
+	os.Rename(fromPath, fromPath+".old")
+	log.Debug("moving ancient dir", "from", toPath, "to", fromPath)
+	os.Rename(toPath, fromPath)
+
+	return nil
+}
+
+func readIndex(t *freezerTable, i uint64) (*indexEntry, error) {
+	buffer := make([]byte, indexEntrySize)
+	if _, err := t.index.ReadAt(buffer, int64(i*indexEntrySize)); err != nil {
+		return nil, err
+	}
+	entry := new(indexEntry)
+	entry.unmarshalBinary(buffer)
+	return entry, nil
+}
+
+func concat(to, from *freezerTable) error {
+	index, err := openFreezerFileForAppend(to.index.Name())
+	if err != nil {
+		return err
+	}
+	toIndex := bufio.NewWriter(index)
+	toFileId := to.headId + 1
+	fromFileId := from.tailId
+
+	cur := uint64(0)
+	for {
+		entry, err := readIndex(from, cur)
+		if err == io.EOF {
+			break
+		}
+
+		if err != nil {
+			return err
+		}
+		if entry.filenum != fromFileId {
+			toFileId++
+			log.Debug("Completed entries for file, renaming and starting entries for new file",
+				"completed", from.fileName(fromFileId), "rename_to", to.fileName(toFileId), "new", from.fileName(fromFileId+1))
+			if err := os.Rename(from.fileName(fromFileId), to.fileName(toFileId)); err != nil {
+				return err
+			}
+			if fromFileId != entry.filenum+1 {
+				return fmt.Errorf("unexpected jump from %d to %d", entry.filenum, fromFileId)
+			}
+			fromFileId = entry.filenum
+		}
+		entry.filenum = toFileId
+		if _, err := toIndex.Write(entry.append(nil)); err != nil {
+			return fmt.Errorf("error index: %e\n", err)
+		}
+		cur++
+	}
+	if err := toIndex.Flush(); err != nil {
+		return err
+	}
+	if err := index.Close(); err != nil {
+		return err
+	}
+
+	log.Debug("Completed index, renaming data file", "from", from.fileName(fromFileId), "to", to.fileName(toFileId))
+	if err := os.Rename(from.fileName(fromFileId), to.fileName(toFileId)); err != nil {
 		return err
 	}
 	return nil

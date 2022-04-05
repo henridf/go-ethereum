@@ -125,7 +125,7 @@ type freezerTable struct {
 
 // NewFreezerTable opens the given path as a freezer table.
 func NewFreezerTable(path, name string, disableSnappy, readonly bool) (*freezerTable, error) {
-	return newTable(path, name, metrics.NilMeter{}, metrics.NilMeter{}, metrics.NilGauge{}, 0, freezerTableSize, disableSnappy, readonly)
+	return newTable(path, name, metrics.NilMeter{}, metrics.NilMeter{}, metrics.NilGauge{}, 0, FreezerTableSize, disableSnappy, readonly)
 }
 
 // newTable opens a freezer table, creating the data and index files if they are
@@ -585,17 +585,21 @@ func (t *freezerTable) Close() error {
 	return nil
 }
 
+func (t *freezerTable) fileName(num uint32) string {
+	var name string
+	if t.noCompression {
+		name = fmt.Sprintf("%s.%04d.rdat", t.name, num)
+	} else {
+		name = fmt.Sprintf("%s.%04d.cdat", t.name, num)
+	}
+	return filepath.Join(t.path, name)
+}
+
 // openFile assumes that the write-lock is held by the caller
 func (t *freezerTable) openFile(num uint32, opener func(string) (*os.File, error)) (f *os.File, err error) {
 	var exist bool
 	if f, exist = t.files[num]; !exist {
-		var name string
-		if t.noCompression {
-			name = fmt.Sprintf("%s.%04d.rdat", t.name, num)
-		} else {
-			name = fmt.Sprintf("%s.%04d.cdat", t.name, num)
-		}
-		f, err = opener(filepath.Join(t.path, name))
+		f, err = opener(t.fileName(num))
 		if err != nil {
 			return nil, err
 		}
