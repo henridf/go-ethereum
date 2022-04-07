@@ -95,7 +95,8 @@ type Downloader struct {
 	mode uint32         // Synchronisation mode defining the strategy used (per sync cycle), use d.getMode() to get the SyncMode
 	mux  *event.TypeMux // Event multiplexer to announce sync operation events
 
-	checkpoint uint64   // Checkpoint block number to enforce head against (e.g. snap sync)
+	checkpoint uint64 // Checkpoint block number to enforce head against (e.g. snap sync)
+	syncfrom   uint64
 	genesis    uint64   // Genesis block number to limit sync to (e.g. light client CHT)
 	queue      *queue   // Scheduler for selecting the hashes to download
 	peers      *peerSet // Set of active peers from which download can proceed
@@ -204,7 +205,7 @@ type BlockChain interface {
 }
 
 // New creates a new downloader to fetch hashes and blocks from remote peers.
-func New(checkpoint uint64, stateDb ethdb.Database, mux *event.TypeMux, chain BlockChain, lightchain LightChain, dropPeer peerDropFn, success func()) *Downloader {
+func New(checkpoint uint64, syncfrom uint64, stateDb ethdb.Database, mux *event.TypeMux, chain BlockChain, lightchain LightChain, dropPeer peerDropFn, success func()) *Downloader {
 	if lightchain == nil {
 		lightchain = chain
 	}
@@ -212,6 +213,7 @@ func New(checkpoint uint64, stateDb ethdb.Database, mux *event.TypeMux, chain Bl
 		stateDB:        stateDb,
 		mux:            mux,
 		checkpoint:     checkpoint,
+		syncfrom:       syncfrom,
 		queue:          newQueue(blockCacheMaxItems, blockCacheInitialItems),
 		peers:          newPeerSet(),
 		blockchain:     chain,
@@ -565,8 +567,15 @@ func (d *Downloader) syncWithPeer(p *peerConnection, hash common.Hash, td, ttd *
 			}
 		}
 	}
+
+	max := func(a, b uint64) uint64 {
+		if a > b {
+			return a
+		}
+		return b
+	}
 	// Initiate the sync using a concurrent header and content retrieval algorithm
-	d.queue.Prepare(origin+1, mode)
+	d.queue.Prepare(max(origin+1, d.syncfrom), mode)
 	if d.syncInitHook != nil {
 		d.syncInitHook(origin, height)
 	}
@@ -578,11 +587,12 @@ func (d *Downloader) syncWithPeer(p *peerConnection, hash common.Hash, td, ttd *
 		// In beacon mode, headers are served by the skeleton syncer
 		headerFetcher = func() error { return d.fetchBeaconHeaders(origin + 1) }
 	}
+	from := max(origin+1, d.syncfrom)
 	fetchers := []func() error{
 		headerFetcher, // Headers are always retrieved
-		func() error { return d.fetchBodies(origin+1, beaconMode) },   // Bodies are retrieved during normal and snap sync
-		func() error { return d.fetchReceipts(origin+1, beaconMode) }, // Receipts are retrieved during snap sync
-		func() error { return d.processHeaders(origin+1, td, ttd, beaconMode) },
+		func() error { return d.fetchBodies(from, beaconMode) },   // Bodies are retrieved during normal and snap sync
+		func() error { return d.fetchReceipts(from, beaconMode) }, // Receipts are retrieved during snap sync
+		func() error { return d.processHeaders(origin+1, d.syncfrom, td, ttd, beaconMode) },
 	}
 	if mode == SnapSync {
 		d.pivotLock.Lock()
@@ -1230,7 +1240,7 @@ func (d *Downloader) fetchReceipts(from uint64, beaconMode bool) error {
 // processHeaders takes batches of retrieved headers from an input channel and
 // keeps processing and scheduling them into the header chain and downloader's
 // queue until the stream ends or a failure occurs.
-func (d *Downloader) processHeaders(origin uint64, td, ttd *big.Int, beaconMode bool) error {
+func (d *Downloader) processHeaders(origin, syncFrom uint64, td, ttd *big.Int, beaconMode bool) error {
 	// Keep a count of uncertain headers to roll back
 	var (
 		rollback    uint64 // Zero means no rollback (fine as you can't unroll the genesis)
@@ -1422,11 +1432,21 @@ func (d *Downloader) processHeaders(origin uint64, td, ttd *big.Int, beaconMode 
 						case <-time.After(time.Second):
 						}
 					}
-					// Otherwise insert the headers for content retrieval
-					inserts := d.queue.Schedule(chunkHeaders, chunkHashes, origin)
-					if len(inserts) != len(chunkHeaders) {
-						rollbackErr = fmt.Errorf("stale headers: len inserts %v len(chunk) %v", len(inserts), len(chunkHeaders))
-						return fmt.Errorf("%w: stale headers", errBadPeer)
+					if chunkHeaders[len(chunkHeaders)-1].Number.Uint64() >= syncFrom {
+						origin := origin
+						if chunkHeaders[0].Number.Uint64() < syncFrom {
+							origin = syncFrom
+							chunkHeaders, chunkHashes = trimHeaders(origin, chunkHeaders, chunkHashes)
+							origin = chunkHeaders[0].Number.Uint64()
+						}
+
+						// Otherwise insert the headers for content retrieval
+						log.Debug("scheduling headers", "first", chunkHeaders[0].Number.Uint64(), "number", len(chunkHeaders))
+						inserts := d.queue.Schedule(chunkHeaders, chunkHashes, origin)
+						if len(inserts) != len(chunkHeaders) {
+							rollbackErr = fmt.Errorf("stale headers: len inserts %v len(chunk) %v", len(inserts), len(chunkHeaders))
+							return fmt.Errorf("%w: stale headers", errBadPeer)
+						}
 					}
 				}
 				headers = headers[limit:]
@@ -1662,6 +1682,22 @@ func (d *Downloader) processSnapSyncContent() error {
 			return err
 		}
 	}
+}
+
+func trimHeaders(pivot uint64, headers []*types.Header, hashes []common.Hash) ([]*types.Header, []common.Hash) {
+	if len(headers) == 0 {
+		return nil, nil
+	}
+	if headers[len(headers)-1].Number.Uint64() < pivot {
+		return nil, nil
+	}
+	// linear search slow, but only happens very seldom
+	for i, header := range headers {
+		if header.Number.Uint64() >= pivot {
+			return headers[i:], hashes[i:]
+		}
+	}
+	panic("invariant violation")
 }
 
 func splitAroundPivot(pivot uint64, results []*fetchResult) (p *fetchResult, before, after []*fetchResult) {

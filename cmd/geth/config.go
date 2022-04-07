@@ -161,6 +161,9 @@ func makeFullNode(ctx *cli.Context) (*node.Node, ethapi.Backend) {
 	if ctx.GlobalIsSet(utils.OverrideTerminalTotalDifficulty.Name) {
 		cfg.Eth.OverrideTerminalTotalDifficulty = new(big.Int).SetUint64(ctx.GlobalUint64(utils.OverrideTerminalTotalDifficulty.Name))
 	}
+	if ctx.GlobalIsSet(utils.OverrideSyncFrom.Name) {
+		cfg.Eth.OverrideSyncFrom = ctx.GlobalUint64(utils.OverrideSyncFrom.Name)
+	}
 	backend, _ := utils.RegisterEthService(stack, &cfg.Eth)
 
 	// Configure GraphQL if requested
