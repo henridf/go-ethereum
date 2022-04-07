@@ -358,14 +358,14 @@ func fillChain(ctx *cli.Context, gap bool) error {
 
 		p := path.Join(tmpDataDir, "geth", "chaindata", "ancient")
 		log.Info("toFreezer", "dir", p)
-		to, err := rawdb.NewFreezer(p, "", false, rawdb.FreezerTableSize, rawdb.FreezerNoSnappy)
+		to, err := rawdb.NewFreezer(p, 0, "", false, rawdb.FreezerTableSize, rawdb.FreezerNoSnappy)
 		if err != nil {
 			return fmt.Errorf("opening tmp freezer for concat: %s", err)
 		}
 
 		p = path.Join(ctx.GlobalString(utils.DataDirFlag.Name), "geth", "chaindata", "ancient")
 		log.Info("fromFreezer", "dir", p)
-		from, err := rawdb.NewFreezer(p, "", false, rawdb.FreezerTableSize, rawdb.FreezerNoSnappy)
+		from, err := rawdb.NewFreezer(p, 0, "", false, rawdb.FreezerTableSize, rawdb.FreezerNoSnappy)
 		if err != nil {
 			return fmt.Errorf("opening datadir freezer for concat: %s", err)
 		}

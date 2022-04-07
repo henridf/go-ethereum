@@ -83,6 +83,7 @@ type handlerConfig struct {
 	Merger     *consensus.Merger         // The manager for eth1/2 transition
 	Network    uint64                    // Network identifier to adfvertise
 	Sync       downloader.SyncMode       // Whether to snap or full sync
+	SyncFrom   uint64                    // start sync from given block (eip-4444 prototyping)
 	BloomCache uint64                    // Megabytes to alloc for snap sync bloom
 	EventMux   *event.TypeMux            // Legacy event mux, deprecate for `feed`
 	Checkpoint *params.TrustedCheckpoint // Hard coded checkpoint for sync challenges
@@ -195,7 +196,7 @@ func newHandler(config *handlerConfig) (*handler, error) {
 	// Construct the downloader (long sync) and its backing state bloom if snap
 	// sync is requested. The downloader is responsible for deallocating the state
 	// bloom when it's done.
-	h.downloader = downloader.New(h.checkpointNumber, config.Database, h.eventMux, h.chain, nil, h.removePeer, success)
+	h.downloader = downloader.New(h.checkpointNumber, config.SyncFrom, config.Database, h.eventMux, h.chain, nil, h.removePeer, success)
 
 	// Construct the fetcher (short sync)
 	validator := func(header *types.Header) error {

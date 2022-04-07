@@ -132,7 +132,7 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	ethashConfig.NotifyFull = config.Miner.NotifyFull
 
 	// Assemble the Ethereum object
-	chainDb, err := stack.OpenDatabaseWithFreezer("chaindata", config.DatabaseCache, config.DatabaseHandles, config.DatabaseFreezer, "eth/db/chaindata/", false)
+	chainDb, err := stack.OpenDatabaseWithFreezer("chaindata", config.DatabaseCache, config.DatabaseHandles, config.DatabaseFreezer, config.OverrideSyncFrom, "eth/db/chaindata/", false)
 	if err != nil {
 		return nil, err
 	}
@@ -226,6 +226,7 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 		Merger:             merger,
 		Network:            config.NetworkId,
 		Sync:               config.SyncMode,
+		SyncFrom:           config.OverrideSyncFrom,
 		BloomCache:         uint64(cacheLimit),
 		EventMux:           eth.eventMux,
 		Checkpoint:         checkpoint,

@@ -131,7 +131,7 @@ func NewFreezerTable(path, name string, disableSnappy, readonly bool) (*freezerT
 // newTable opens a freezer table, creating the data and index files if they are
 // non-existent. Both files are truncated to the shortest common length to ensure
 // they don't go out of sync.
-func newTable(path string, name string, readMeter metrics.Meter, writeMeter metrics.Meter, sizeGauge metrics.Gauge, startTail uint32, maxFilesize uint32, noCompression, readonly bool) (*freezerTable, error) {
+func newTable(path string, name string, readMeter metrics.Meter, writeMeter metrics.Meter, sizeGauge metrics.Gauge, startTail uint64, maxFilesize uint32, noCompression, readonly bool) (*freezerTable, error) {
 	// Ensure the containing directory exists and open the indexEntry file
 	if err := os.MkdirAll(path, 0755); err != nil {
 		return nil, err
@@ -201,7 +201,7 @@ func newTable(path string, name string, readMeter metrics.Meter, writeMeter metr
 
 // repair cross-checks the head and the index file and truncates them to
 // be in sync with each other after a potential crash / data loss.
-func (t *freezerTable) repair(tail uint32) error {
+func (t *freezerTable) repair(tail uint64) error {
 	// Create a temporary offset buffer to init files with and read indexEntry into
 	buffer := make([]byte, indexEntrySize)
 
@@ -212,7 +212,7 @@ func (t *freezerTable) repair(tail uint32) error {
 	}
 	if stat.Size() == 0 {
 		initIndex := indexEntry{
-			offset: tail,
+			offset: uint32(tail),
 		}
 		if _, err := t.index.Write(initIndex.append(nil)); err != nil {
 			return err
