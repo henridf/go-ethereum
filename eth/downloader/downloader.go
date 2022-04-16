@@ -580,9 +580,15 @@ func (d *Downloader) syncWithPeer(p *peerConnection, hash common.Hash, td, ttd *
 		d.syncInitHook(origin, height)
 	}
 	var headerFetcher func() error
+
+	s := d.syncfrom
+	if d.syncfrom == 0 {
+		s = origin + 1
+	}
+
 	if !beaconMode {
 		// In legacy mode, headers are retrieved from the network
-		headerFetcher = func() error { return d.fetchHeaders(p, origin+1, latest.Number.Uint64()) }
+		headerFetcher = func() error { return d.fetchHeaders(p, s, latest.Number.Uint64()) }
 	} else {
 		// In beacon mode, headers are served by the skeleton syncer
 		headerFetcher = func() error { return d.fetchBeaconHeaders(origin + 1) }
@@ -592,7 +598,7 @@ func (d *Downloader) syncWithPeer(p *peerConnection, hash common.Hash, td, ttd *
 		headerFetcher, // Headers are always retrieved
 		func() error { return d.fetchBodies(from, beaconMode) },   // Bodies are retrieved during normal and snap sync
 		func() error { return d.fetchReceipts(from, beaconMode) }, // Receipts are retrieved during snap sync
-		func() error { return d.processHeaders(origin+1, d.syncfrom, td, ttd, beaconMode) },
+		func() error { return d.processHeaders(s, d.syncfrom, td, ttd, beaconMode) },
 	}
 	if mode == SnapSync {
 		d.pivotLock.Lock()
