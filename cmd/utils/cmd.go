@@ -23,6 +23,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"os"
 	"os/signal"
 	"runtime"
@@ -42,6 +43,7 @@ import (
 	"github.com/ethereum/go-ethereum/node"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rlp"
+	"github.com/ethereum/go-ethereum/ssz/spec"
 	"gopkg.in/urfave/cli.v1"
 )
 
@@ -168,65 +170,84 @@ func GapfillChain(chain *core.BlockChain, tc *params.TrustedCheckpoint, fn strin
 		return err
 	}
 	defer fh.Close()
-
 	var reader io.Reader = fh
 	if strings.HasSuffix(fn, ".gz") {
 		if reader, err = gzip.NewReader(reader); err != nil {
 			return err
 		}
 	}
-	stream := rlp.NewStream(reader, 0)
+
+	blobs := spec.Blocks{}
+	b, err := ioutil.ReadAll(reader)
+	if err != nil {
+		return fmt.Errorf("reading ssz file: %s\n", err)
+	}
+	if err = blobs.UnmarshalSSZ(b); err != nil {
+		return fmt.Errorf("unmarshalling ssz: %s\n", err)
+	}
 
 	// Run actual the import.
 	blocks := make(types.Blocks, importBatchSize)
 	n := 0
 	receipts := make([]types.Receipts, importBatchSize)
-	var stReceipts []*types.ReceiptForStorage
 	for batch := 0; ; batch++ {
 		// Load a batch of RLP blocks.
 		if checkInterrupt() {
 			return fmt.Errorf("interrupted")
 		}
+		wend := (batch + 1) * importBatchSize * 2
+		last := false
+		if wend > len(blobs.RlpPayload) {
+			wend = len(blobs.RlpPayload)
+			last = true
+		}
+		window := blobs.RlpPayload[batch*importBatchSize*2 : wend]
+
 		i := 0
-		for ; i < importBatchSize; i++ {
-			var b types.Block
-			if err := stream.Decode(&b); err == io.EOF {
-				break
-			} else if err != nil {
+		blocks = blocks[:0]
+		receipts = receipts[:0]
+		wlen := len(window)
+		for ; i < wlen; i = i + 2 {
+			var block types.Block
+			var stReceipts []*types.ReceiptForStorage
+
+			if err := rlp.DecodeBytes(window[0], &block); err != nil {
 				return fmt.Errorf("at block %d: %v", n, err)
 			}
-			if err := stream.Decode(&stReceipts); err == io.EOF {
-				break
-			} else if err != nil {
-				return fmt.Errorf("at receipts %d: %v", n, err)
+
+			if err := rlp.DecodeBytes(window[1], &stReceipts); err != nil {
+				return fmt.Errorf("at block %d (receipts): %v", n, err)
 			}
+			//			if len(stReceipts) > 0 {
+			//				fmt.Printf("block %d: %d receipts\n", block.NumberU64(), len(stReceipts))
+			//			}
+			window = window[2:]
 			rrs := make(types.Receipts, len(stReceipts))
 			for i, stReceipt := range stReceipts {
 				rrs[i] = (*types.Receipt)(stReceipt)
 			}
 
 			// don't import first block
-			if b.NumberU64() == 0 {
-				i--
+			if block.NumberU64() == 0 {
 				continue
 			}
-			blocks[i] = &b
-			receipts[i] = rrs
+			blocks = append(blocks, &block)
+			receipts = append(receipts, rrs)
 			n++
 		}
-		if i == 0 {
+		if last {
 			break
 		}
 		// Import the batch.
 		if checkInterrupt() {
 			return fmt.Errorf("interrupted")
 		}
-		missingBlocks := missingBlocks(chain, blocks[:i])
+		missingBlocks := missingBlocks(chain, blocks)
 		if len(missingBlocks) == 0 {
-			log.Info("Skipping batch as all blocks present", "batch", batch, "first", blocks[0].Hash(), "last", blocks[i-1].Hash())
+			log.Info("Skipping batch as all blocks present", "batch", batch, "first", blocks[0].Hash(), "last", blocks[len(blocks)-1].Hash())
 			continue
 		}
-		missingReceipts := missingReceipts(chain, blocks[:i], receipts[:i])
+		missingReceipts := missingReceipts(chain, blocks, receipts)
 		headers := headers(missingBlocks)
 		if _, err := chain.InsertHeaderChain(headers, 100); err != nil {
 			return fmt.Errorf("error inserting headers %d: %v", n, err)
